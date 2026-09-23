@@ -1,0 +1,53 @@
+# 定时把上游（Sliverkiss/workbuddy2api）的新提交合并进本 fork。
+#
+# 这里刻意不触发构建：本仓库自带的 build.yml 已经每天 UTC 04:23（北京 12:23）
+# 定时打包多架构镜像；本工作流排在 UTC 19:17（北京 03:17），先同步、后打包，
+# 顺序天然衔接，无需重复触发。
+#
+# 合并冲突时本工作流会失败并保留现场（绝不 force push），此时需人工合并。
+
+name: Sync fork
+
+on:
+  schedule:
+    # 每天北京时间 03:17 = UTC 19:17（早于 build.yml 的 04:23，保证打包拿到最新代码）。
+    # 不取整点：GitHub schedule 在整点高峰排队严重，实测会被延迟甚至静默丢弃。
+    - cron: '17 19 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-fork
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出本 fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 合并上游新提交
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/Sliverkiss/workbuddy2api.git
+          git fetch upstream --prune --tags
+
+          if git merge-base --is-ancestor upstream/master HEAD; then
+            echo "上游无新提交，跳过"
+            exit 0
+          fi
+
+          if ! git merge --no-edit upstream/master; then
+            echo "::error::与上游合并冲突，需人工处理（未做任何推送）"
+            git merge --abort || true
+            exit 1
+          fi
+
+          git push origin HEAD:master
